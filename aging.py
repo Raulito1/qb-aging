@@ -21,11 +21,15 @@ try:
 except ValueError:
     sys.exit("❌  No CSV found in incoming_csv/.  Aborting.")
 
-df = pd.read_csv(csv_path, dtype=str)
+# QuickBooks exports include a title row; real headers start on row 2
+df = pd.read_csv(csv_path, dtype=str, skiprows=1)
 # --- Clean header whitespace & unify case --------------------------------
 df.columns = df.columns.str.strip()
 # Keep an original copy for debugging but work with lower‑case keys
 df.columns = df.columns.str.lower()
+# Normalize weird whitespace (non‑breaking spaces, double spaces, tabs)
+df.columns = df.columns.str.replace("\u00A0", " ", regex=False)
+df.columns = df.columns.str.replace(r"\s+", " ", regex=True)
 
 # Case-insensitive mapping for alternate column names
 ALT_NAMES = {
@@ -40,6 +44,13 @@ ALT_NAMES = {
     "invoice date": "due date",
 }
 df.rename(columns=ALT_NAMES, inplace=True)
+# If multiple synonyms mapped to the same name (e.g., "balance"), keep the last occurrence
+if df.columns.duplicated().any():
+    df = df.loc[:, ~df.columns.duplicated(keep="last")]
+
+# Drop subtotal / rubric rows such as "OUT OF RANGE"
+if "date" in df.columns:
+    df = df[~df["date"].str.contains("OUT OF RANGE", na=False)]
 
 # Finally, standardise to capitalised names used later
 df.rename(columns={"due date": "Due Date", "balance": "Balance"}, inplace=True)
