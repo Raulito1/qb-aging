@@ -21,22 +21,28 @@ try:
 except ValueError:
     sys.exit("❌  No CSV found in incoming_csv/.  Aborting.")
 
-# --- Read CSV and clean header whitespace and case --------------------------
 df = pd.read_csv(csv_path, dtype=str)
-# --- Clean header whitespace and case -----------------------------------
-df.columns = df.columns.str.strip()          # remove leading/trailing spaces
-# Allow for alternate column names in different QuickBooks exports
+# --- Clean header whitespace & unify case --------------------------------
+df.columns = df.columns.str.strip()
+# Keep an original copy for debugging but work with lower‑case keys
+df.columns = df.columns.str.lower()
+
+# Case-insensitive mapping for alternate column names
 ALT_NAMES = {
-    # Balance synonyms
-    "Open balance": "Balance",
-    "Open Balance": "Balance",
-    "Amount": "Balance",
-    # Due Date synonyms
-    "DueDate": "Due Date",
-    "Invoice Due Date": "Due Date",
-    "Invoice Date": "Due Date"
+    # balance synonyms
+    "open balance": "balance",
+    "amount": "balance",
+    "balance": "balance",
+    # due date synonyms
+    "due date": "due date",
+    "duedate": "due date",
+    "invoice due date": "due date",
+    "invoice date": "due date",
 }
 df.rename(columns=ALT_NAMES, inplace=True)
+
+# Finally, standardise to capitalised names used later
+df.rename(columns={"due date": "Due Date", "balance": "Balance"}, inplace=True)
 for col in ("Due Date", "Balance"):
     if col not in df.columns:
         sys.exit(f"❌  CSV missing '{col}' column.")
