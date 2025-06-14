@@ -22,13 +22,13 @@ except ValueError:
     sys.exit("❌  No CSV found in incoming_csv/.  Aborting.")
 
 df = pd.read_csv(csv_path, dtype=str)
-    # Allow for alternate column names in different QuickBooks exports
-    ALT_NAMES = {
-        "Open balance": "Balance",
-        "Open Balance": "Balance",
-        "Amount": "Balance"
-    }
-    df.rename(columns=ALT_NAMES, inplace=True)
+# Allow for alternate column names in different QuickBooks exports
+ALT_NAMES = {
+    "Open balance": "Balance",
+    "Open Balance": "Balance",
+    "Amount": "Balance"
+}
+df.rename(columns=ALT_NAMES, inplace=True)
 for col in ("Due Date", "Balance"):
     if col not in df.columns:
         sys.exit(f"❌  CSV missing '{col}' column.")
