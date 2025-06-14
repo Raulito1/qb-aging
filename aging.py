@@ -5,6 +5,8 @@ import os, sys, glob, pandas as pd
 import gspread
 from gspread_dataframe import set_with_dataframe
 from dotenv import load_dotenv
+import re
+from gspread.utils import rowcol_to_a1
 
 BASE = Path(__file__).parent
 load_dotenv(BASE / ".env")               # user copies .env from template
@@ -20,6 +22,13 @@ except ValueError:
     sys.exit("❌  No CSV found in incoming_csv/.  Aborting.")
 
 df = pd.read_csv(csv_path, dtype=str)
+    # Allow for alternate column names in different QuickBooks exports
+    ALT_NAMES = {
+        "Open balance": "Balance",
+        "Open Balance": "Balance",
+        "Amount": "Balance"
+    }
+    df.rename(columns=ALT_NAMES, inplace=True)
 for col in ("Due Date", "Balance"):
     if col not in df.columns:
         sys.exit(f"❌  CSV missing '{col}' column.")
@@ -28,18 +37,46 @@ df["Due Date"]     = pd.to_datetime(df["Due Date"], errors="coerce")
 df["Balance"]      = pd.to_numeric(df["Balance"], errors="coerce")
 df["Days Overdue"] = (pd.Timestamp(date.today()) - df["Due Date"]).dt.days
 
-overdue = df.query("Balance > 0 and DaysOverdue > 0", engine="python").copy()
+overdue = df.query("Balance > 0 and `Days Overdue` > 0", engine="python").copy()
 bins   = [0, 30, 60, 90, 120, float("inf")]
 labels = ["1-30", "31-60", "61-90", "91-120", "120+"]
 overdue["Bucket"] = pd.cut(overdue["Days Overdue"], bins, labels=labels)
 
+# ---- 4. push to Google Sheets (skip column A, headers on row 3, blank row 4) ----
+START_COL = 2        # column B
+HEADER_ROW = 3       # headers in row 3
+
 gc = gspread.service_account(filename=BASE / SERVICE_JSON)
 sh = gc.open_by_key(SHEET_ID)
+
+# Ensure worksheet exists with enough space
 try:
     ws = sh.worksheet(TARGET_TAB)
-    ws.clear()
 except gspread.WorksheetNotFound:
-    ws = sh.add_worksheet(title=TARGET_TAB, rows=1, cols=len(overdue.columns)+2)
+    ws = sh.add_worksheet(
+        title=TARGET_TAB,
+        rows=2000,
+        cols=len(overdue.columns) + START_COL + 5
+    )
 
-set_with_dataframe(ws, overdue, include_index=False, resize=True)
-print(f"✅ Uploaded {len(overdue)} overdue invoices from {Path(csv_path).name}.")
+# Clear previous data block only (keep column A and rows 1‑2 intact)
+last_col_index = START_COL + len(overdue.columns) - 1
+last_col_letter = re.sub(r"\d", "", rowcol_to_a1(1, last_col_index))
+clear_range = f"{rowcol_to_a1(HEADER_ROW, START_COL)}:{last_col_letter}"
+ws.batch_clear([clear_range])
+
+# Write headers at HEADER_ROW, data follows automatically (row 4 stays blank)
+set_with_dataframe(
+    ws,
+    overdue,
+    include_index=False,
+    include_column_header=True,
+    resize=False,
+    row=HEADER_ROW,
+    col=START_COL
+)
+
+print(
+    f"✅ Uploaded {len(overdue)} overdue invoices to "
+    f"'{TARGET_TAB}' starting at {rowcol_to_a1(HEADER_ROW, START_COL)}"
+)
