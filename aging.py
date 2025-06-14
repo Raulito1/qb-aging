@@ -21,12 +21,20 @@ try:
 except ValueError:
     sys.exit("❌  No CSV found in incoming_csv/.  Aborting.")
 
+# --- Read CSV and clean header whitespace and case --------------------------
 df = pd.read_csv(csv_path, dtype=str)
+# --- Clean header whitespace and case -----------------------------------
+df.columns = df.columns.str.strip()          # remove leading/trailing spaces
 # Allow for alternate column names in different QuickBooks exports
 ALT_NAMES = {
+    # Balance synonyms
     "Open balance": "Balance",
     "Open Balance": "Balance",
-    "Amount": "Balance"
+    "Amount": "Balance",
+    # Due Date synonyms
+    "DueDate": "Due Date",
+    "Invoice Due Date": "Due Date",
+    "Invoice Date": "Due Date"
 }
 df.rename(columns=ALT_NAMES, inplace=True)
 for col in ("Due Date", "Balance"):
