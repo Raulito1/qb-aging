@@ -17,10 +17,14 @@ try:
     from gspread_formatting import (
         set_data_validation_for_cell_range,
         DataValidationRule,
+        set_number_format,
+        NumberFormat,
     )
 except ImportError:
     set_data_validation_for_cell_range = None
     DataValidationRule = None
+    set_number_format = None
+    NumberFormat = None
 
 BASE = Path(__file__).parent
 load_dotenv(BASE / ".env")               # user copies .env from template
@@ -180,6 +184,76 @@ except gspread.WorksheetNotFound:
         set_data_validation_for_cell_range(ws, rng, dropdown_rule)
     else:
         print("ℹ️  gspread‑formatting not installed; skipping checkbox/dropdown setup.")
+
+    # ── Ensure header row is present and refresh UI helpers / formats ─────────
+    if not ws.cell(HEADER_ROW, START_COL).value:
+        ws.update(rowcol_to_a1(HEADER_ROW, START_COL), [HEADERS])
+
+    if (
+        DataValidationRule
+        and set_data_validation_for_cell_range
+        and set_number_format
+        and NumberFormat
+    ):
+        max_rows = 2000
+
+        # --- 1. Check‑boxes ---------------------------------------------------
+        checkbox_rule = DataValidationRule(condition_type="BOOLEAN", showCustomUi=True)
+        for offset in (7, 8, 10):  # Slack Updated, No Work List, Demand Letter
+            col = START_COL + offset
+            rng = (
+                f"{rowcol_to_a1(HEADER_ROW + 1, col)}:"
+                f"{rowcol_to_a1(max_rows, col)}"
+            )
+            set_data_validation_for_cell_range(ws, rng, checkbox_rule)
+
+        # --- 2. Action Taken drop‑down ---------------------------------------
+        actions = [
+            "Add to No Work List",
+            "Payment Plan Proposed",
+            "Payment Plan Established",
+            "Manager Escalation",
+            "CSM/AE Notified",
+            "Accounting Email Sent",
+        ]
+        dropdown_rule = DataValidationRule(
+            condition_type="ONE_OF_LIST",
+            condition_values=actions,
+            showCustomUi=True,
+        )
+        action_col = START_COL + 6  # “Action Taken”
+        rng = (
+            f"{rowcol_to_a1(HEADER_ROW + 1, action_col)}:"
+            f"{rowcol_to_a1(max_rows, action_col)}"
+        )
+        set_data_validation_for_cell_range(ws, rng, dropdown_rule)
+
+        # --- 3. Column number/date formats -----------------------------------
+        # Amount column  (index 1 relative to START_COL)
+        amt_col = START_COL + 1
+        amt_rng = (
+            f"{rowcol_to_a1(HEADER_ROW + 1, amt_col)}:"
+            f"{rowcol_to_a1(max_rows, amt_col)}"
+        )
+        set_number_format(
+            ws,
+            amt_rng,
+            NumberFormat(type="NUMBER", pattern="$#,##0.00"),
+        )
+
+        # Date column  (index 2 relative to START_COL)
+        date_col = START_COL + 2
+        date_rng = (
+            f"{rowcol_to_a1(HEADER_ROW + 1, date_col)}:"
+            f"{rowcol_to_a1(max_rows, date_col)}"
+        )
+        set_number_format(
+            ws,
+            date_rng,
+            NumberFormat(type="DATE", pattern="yyyy-mm-dd"),
+        )
+    else:
+        print("ℹ️  gspread‑formatting partially missing; UI helpers not refreshed.")
 
 # -------------------------------------------------------------------
 # Determine where the next upload should begin.
