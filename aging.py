@@ -97,6 +97,24 @@ bucket_to_collection = {
 # Convert category to string to ensure mapping works; missing buckets stay NaN
 overdue["Collection Item"] = overdue["Bucket"].astype(str).map(bucket_to_collection)
 
+# ----------------------- constants ---------------------------------
+# Target column layout for the “Overdue aging” sheet
+HEADERS = [
+    "Customer",
+    "Amount",
+    "Date",
+    "Days Outstanding",
+    "Collection Item",
+    "Action Taken",
+    "Slack Updated",
+    "No Work List",
+    "Removed from No Work List Approver",
+    "Demand Letter",
+]
+
+START_COL  = 2   # column B
+HEADER_ROW = 3   # header appears in row 3
+# -------------------------------------------------------------------
 # ---- Conform DataFrame to predefined HEADERS --------------------------
 rename_map = {
     "Balance": "Amount",
