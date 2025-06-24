@@ -8,6 +8,20 @@ from dotenv import load_dotenv
 import re
 from gspread.utils import rowcol_to_a1
 
+# ------------------------------------------------------------------------
+# Optional formatting helpers (checkboxes, dropdowns).  If the extra
+# dependency is missing we just skip UI‑enhancement but the upload still
+# works.
+# ------------------------------------------------------------------------
+try:
+    from gspread_formatting import (
+        set_data_validation_for_cell_range,
+        DataValidationRule,
+    )
+except ImportError:
+    set_data_validation_for_cell_range = None
+    DataValidationRule = None
+
 BASE = Path(__file__).parent
 load_dotenv(BASE / ".env")               # user copies .env from template
 
@@ -67,9 +81,42 @@ bins   = [0, 30, 60, 90, 120, float("inf")]
 labels = ["1-30", "31-60", "61-90", "91-120", "120+"]
 overdue["Bucket"] = pd.cut(overdue["Days Overdue"], bins, labels=labels)
 
+# ---- Conform DataFrame to predefined HEADERS --------------------------
+rename_map = {
+    "Balance": "Amount",
+    "Due Date": "Date",
+    "Days Overdue": "Days Outstanding",
+    "customer": "Customer",
+    "customer name": "Customer",
+    "name": "Customer",
+}
+overdue.rename(columns=rename_map, inplace=True)
+
+# Ensure all expected columns exist (blank if not populated yet)
+for col in HEADERS:
+    if col not in overdue.columns:
+        overdue[col] = None
+
+# Re‑order columns to match the Google Sheet
+overdue = overdue[HEADERS]
+
 # ---- 4. push to Google Sheets (skip column A, headers on row 3, blank row 4) ----
 START_COL = 2        # column B
 HEADER_ROW = 3       # headers in row 3
+
+# Target column layout for the “Overdue aging” sheet
+HEADERS = [
+    "Customer",
+    "Amount",
+    "Date",
+    "Days Outstanding",
+    "Collection Item",
+    "Action Taken",
+    "Slack Updated",
+    "No Work List",
+    "Removed from No Work List Approver",
+    "Demand Letter",
+]
 
 gc = gspread.service_account(filename=BASE / SERVICE_JSON)
 sh = gc.open_by_key(SHEET_ID)
@@ -81,16 +128,47 @@ except gspread.WorksheetNotFound:
     ws = sh.add_worksheet(
         title=TARGET_TAB,
         rows=2000,
-        cols=len(overdue.columns) + START_COL + 5
+        cols=len(HEADERS) + START_COL + 5
     )
 
-    # -------------------------------------------------------------------
-    # Determine where the next upload should begin.
-    #   • On the very first run (no headers yet) we write headers at
-    #     HEADER_ROW and data starts on the row below.
-    #   • On subsequent runs we keep the existing data and simply append
-    #     new rows underneath it without rewriting headers.
-    # -------------------------------------------------------------------
+    # --- Prime the worksheet with header row and UI helpers -------------
+    header_cell = rowcol_to_a1(HEADER_ROW, START_COL)
+    ws.update(header_cell, [HEADERS])
+
+    # Add check‑boxes and dropdown if gspread‑formatting is available
+    if DataValidationRule and set_data_validation_for_cell_range:
+        max_rows = 2000
+        checkbox_rule = DataValidationRule(
+            condition_type="BOOLEAN",
+            showCustomUi=True
+        )
+        # Column offsets (0‑based) from START_COL
+        checkbox_offsets = [6, 7, 9]        # Slack Updated, No Work List, Demand Letter
+        for offset in checkbox_offsets:
+            col = START_COL + offset
+            rng = f"{rowcol_to_a1(HEADER_ROW + 1, col)}:{rowcol_to_a1(max_rows, col)}"
+            set_data_validation_for_cell_range(ws, rng, checkbox_rule)
+
+        # Dropdown for Action Taken
+        actions = ["Add to No Work List", "Payment Plan Proposed", "Payment Plan Established", "Manager Escalation", "CSM/AE Notified", "Accounting Email Sent"]
+        dropdown_rule = DataValidationRule(
+            condition_type="ONE_OF_LIST",
+            condition_values=actions,
+            showCustomUi=True
+        )
+        action_col = START_COL + 5  # “Action Taken”
+        rng = f"{rowcol_to_a1(HEADER_ROW + 1, action_col)}:{rowcol_to_a1(max_rows, action_col)}"
+        set_data_validation_for_cell_range(ws, rng, dropdown_rule)
+    else:
+        print("ℹ️  gspread‑formatting not installed; skipping checkbox/dropdown setup.")
+
+# -------------------------------------------------------------------
+# Determine where the next upload should begin.
+#   • On the very first run (no headers yet) we write headers at
+#     HEADER_ROW and data starts on the row below.
+#   • On subsequent runs we keep the existing data and simply append
+#     new rows underneath it without rewriting headers.
+# -------------------------------------------------------------------
 try:
     header_present = bool(ws.cell(HEADER_ROW, START_COL).value)
 except gspread.exceptions.APIError:
