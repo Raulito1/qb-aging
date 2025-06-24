@@ -76,10 +76,26 @@ df["Due Date"]     = pd.to_datetime(df["Due Date"], errors="coerce")
 df["Balance"]      = pd.to_numeric(df["Balance"], errors="coerce")
 df["Days Overdue"] = (pd.Timestamp(date.today()) - df["Due Date"]).dt.days
 
-overdue = df.query("Balance > 0 and `Days Overdue` > 0", engine="python").copy()
-bins   = [0, 30, 60, 90, 120, float("inf")]
-labels = ["1-30", "31-60", "61-90", "91-120", "120+"]
+# Only actionable items: unpaid invoices that are at least 21 days late
+overdue = df.query("Balance > 0 and `Days Overdue` >= 21", engine="python").copy()
+# Collections workflow starts after 20+ days overdue:
+#   21‑30, 31‑45, 46‑60, 61‑90, 91+
+# Invoices ≤20 days late are left un‑bucketed (NaN) so analysts can
+# focus only on actionable rows.
+bins   = [20, 30, 45, 60, 90, float("inf")]
+labels = ["21-30", "31-45", "46-60", "61-90", "91+"]
 overdue["Bucket"] = pd.cut(overdue["Days Overdue"], bins, labels=labels)
+
+# Derive “Collection Item” from the bucket label
+bucket_to_collection = {
+    "21-30": "Accounting Outreach",
+    "31-45": "CSM/AE Outreach",
+    "46-60": "Manager Escalation",
+    "61-90": "Add to No Work List",
+    "91+":   "Demand Letter",
+}
+# Convert category to string to ensure mapping works; missing buckets stay NaN
+overdue["Collection Item"] = overdue["Bucket"].astype(str).map(bucket_to_collection)
 
 # ---- Conform DataFrame to predefined HEADERS --------------------------
 rename_map = {
