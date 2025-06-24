@@ -67,6 +67,8 @@ for col in ("Due Date", "Balance"):
         sys.exit(f"❌  CSV missing '{col}' column.")
 
 df["Due Date"] = pd.to_datetime(df["Due Date"], format='%m/%d/%Y', errors="coerce")
+# Preserve the original Balance string values for diagnostics
+df["Balance_raw"] = df["Balance"]
 df["Balance"] = pd.to_numeric(df["Balance"].str.replace(',', ''), errors="coerce")
 df["Days Overdue"] = (pd.Timestamp(date.today()) - df["Due Date"]).dt.days
 
@@ -76,10 +78,10 @@ print(f"📊 Rows with valid Balance: {df['Balance'].notna().sum()}")
 print(f"📊 Rows with Balance > 0: {(df['Balance'] > 0).sum()}")
 
 # Check for balance string conversion issues
-balance_conversion_failed = df[df["Balance"].isna() & df["balance"].notna()]
+balance_conversion_failed = df[df["Balance"].isna() & df["Balance_raw"].notna()]
 if len(balance_conversion_failed) > 0:
     print(f"⚠️  {len(balance_conversion_failed)} rows failed balance conversion")
-    print("   Sample values:", balance_conversion_failed["balance"].head().tolist())
+    print("   Sample raw balance values:", balance_conversion_failed["Balance_raw"].head().tolist())
 
 # Only actionable items: unpaid invoices that are at least 21 days late
 overdue = df.query("Balance > 0 and `Days Overdue` >= 21", engine="python").copy()
