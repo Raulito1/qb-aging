@@ -39,11 +39,15 @@ ALT_NAMES = {
     "open balance": "balance",
     "amount": "balance",
     "balance": "balance",
-    # due date synonyms
+    # due date synonyms  ── must reflect the actual *due* date, not invoice date
     "due date": "due date",
     "duedate": "due date",
     "invoice due date": "due date",
-    "invoice date": "due date",
+
+    # invoice date synonyms  ── kept separate so we don’t confuse aging logic
+    "invoice date": "invoice date",
+    "date": "invoice date",
+
     # customer synonyms
     "customer full name": "customer",
     "customer name": "customer",
