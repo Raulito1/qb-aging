@@ -8,21 +8,6 @@ from dotenv import load_dotenv
 import re
 from gspread.utils import rowcol_to_a1
 
-# ------------------------------------------------------------------------
-# Optional formatting helpers (checkboxes, dropdowns).
-# ------------------------------------------------------------------------
-try:
-    from gspread_formatting import (
-        set_data_validation_for_cell_range,
-        DataValidationRule,
-        set_number_format,
-        NumberFormat,
-    )
-    FORMATTING_AVAILABLE = True
-except ImportError:
-    FORMATTING_AVAILABLE = False
-    print("⚠️  gspread-formatting not installed. Install with: pip install gspread-formatting")
-
 BASE = Path(__file__).parent
 load_dotenv(BASE / ".env")
 
@@ -137,27 +122,40 @@ except gspread.WorksheetNotFound:
     )
     worksheet_created = True
 
-# Setup formatting function
-def setup_formatting(worksheet):
-    """Setup dropdowns and checkboxes for the worksheet"""
-    if not FORMATTING_AVAILABLE:
-        print("⚠️  Skipping formatting setup - gspread-formatting not available")
-        return
+
+def setup_formatting_with_api(spreadsheet, worksheet):
+    """Setup dropdowns and checkboxes using Sheets API directly"""
     
-    print("🔧 Setting up dropdowns and checkboxes...")
+    sheet_id = worksheet.id
     
-    # Checkboxes for columns: Slack Updated (7), No Work List (8), Demand Letter (10)
-    checkbox_rule = DataValidationRule(
-        condition_type="BOOLEAN",
-        showCustomUi=True
-    )
+    # Prepare batch update requests
+    requests = []
     
-    for offset in [7, 8, 10]:
-        col = START_COL + offset
-        rng = f"{rowcol_to_a1(HEADER_ROW + 1, col)}:{rowcol_to_a1(MAX_ROWS, col)}"
-        set_data_validation_for_cell_range(worksheet, rng, checkbox_rule)
+    # 1. Add checkboxes for columns: Slack Updated (7), No Work List (8), Demand Letter (10)
+    checkbox_columns = [7, 8, 10]  # 0-based offsets from START_COL
     
-    # Dropdown for Action Taken (column 6)
+    for offset in checkbox_columns:
+        col_index = START_COL + offset - 1  # Convert to 0-based index
+        requests.append({
+            "setDataValidation": {
+                "range": {
+                    "sheetId": sheet_id,
+                    "startRowIndex": HEADER_ROW,  # Row 4 (0-based)
+                    "endRowIndex": MAX_ROWS,
+                    "startColumnIndex": col_index,
+                    "endColumnIndex": col_index + 1
+                },
+                "rule": {
+                    "condition": {
+                        "type": "BOOLEAN"
+                    },
+                    "showCustomUi": True
+                }
+            }
+        })
+    
+    # 2. Add dropdown for Action Taken (column 6)
+    action_col_index = START_COL + 6 - 1  # Convert to 0-based
     actions = [
         "Add to No Work List",
         "Payment Plan Proposed",
@@ -166,34 +164,80 @@ def setup_formatting(worksheet):
         "CSM/AE Notified",
         "Accounting Email Sent"
     ]
-    dropdown_rule = DataValidationRule(
-        condition_type="ONE_OF_LIST",
-        condition_values=actions,
-        showCustomUi=True
-    )
-    action_col = START_COL + 6
-    rng = f"{rowcol_to_a1(HEADER_ROW + 1, action_col)}:{rowcol_to_a1(MAX_ROWS, action_col)}"
-    set_data_validation_for_cell_range(worksheet, rng, dropdown_rule)
     
-    # Number formatting for Amount column
-    amt_col = START_COL + 1
-    amt_rng = f"{rowcol_to_a1(HEADER_ROW + 1, amt_col)}:{rowcol_to_a1(MAX_ROWS, amt_col)}"
-    set_number_format(
-        worksheet,
-        amt_rng,
-        NumberFormat(type="NUMBER", pattern="$#,##0.00")
-    )
+    requests.append({
+        "setDataValidation": {
+            "range": {
+                "sheetId": sheet_id,
+                "startRowIndex": HEADER_ROW,
+                "endRowIndex": MAX_ROWS,
+                "startColumnIndex": action_col_index,
+                "endColumnIndex": action_col_index + 1
+            },
+            "rule": {
+                "condition": {
+                    "type": "ONE_OF_LIST",
+                    "values": [{"userEnteredValue": action} for action in actions]
+                },
+                "showCustomUi": True
+            }
+        }
+    })
     
-    # Date formatting for Date column
-    date_col = START_COL + 2
-    date_rng = f"{rowcol_to_a1(HEADER_ROW + 1, date_col)}:{rowcol_to_a1(MAX_ROWS, date_col)}"
-    set_number_format(
-        worksheet,
-        date_rng,
-        NumberFormat(type="DATE", pattern="yyyy-mm-dd")
-    )
+    # 3. Format Amount column as currency
+    amt_col_index = START_COL + 1 - 1  # Convert to 0-based
+    requests.append({
+        "repeatCell": {
+            "range": {
+                "sheetId": sheet_id,
+                "startRowIndex": HEADER_ROW,
+                "endRowIndex": MAX_ROWS,
+                "startColumnIndex": amt_col_index,
+                "endColumnIndex": amt_col_index + 1
+            },
+            "cell": {
+                "userEnteredFormat": {
+                    "numberFormat": {
+                        "type": "CURRENCY",
+                        "pattern": "$#,##0.00"
+                    }
+                }
+            },
+            "fields": "userEnteredFormat.numberFormat"
+        }
+    })
     
-    print("✅ Formatting setup complete")
+    # 4. Format Date column
+    date_col_index = START_COL + 2 - 1  # Convert to 0-based
+    requests.append({
+        "repeatCell": {
+            "range": {
+                "sheetId": sheet_id,
+                "startRowIndex": HEADER_ROW,
+                "endRowIndex": MAX_ROWS,
+                "startColumnIndex": date_col_index,
+                "endColumnIndex": date_col_index + 1
+            },
+            "cell": {
+                "userEnteredFormat": {
+                    "numberFormat": {
+                        "type": "DATE",
+                        "pattern": "yyyy-mm-dd"
+                    }
+                }
+            },
+            "fields": "userEnteredFormat.numberFormat"
+        }
+    })
+    
+    # Execute batch update
+    if requests:
+        try:
+            spreadsheet.batch_update({"requests": requests})
+            print("✅ Formatting applied successfully (dropdowns, checkboxes, number formats)")
+        except Exception as e:
+            print(f"⚠️  Error applying formatting: {e}")
+
 
 # Check if headers exist
 try:
@@ -207,16 +251,16 @@ if not header_present:
     write_row = HEADER_ROW + 1
     include_header = False
     # Setup formatting after headers are written
-    setup_formatting(ws)
+    setup_formatting_with_api(sh, ws)
 else:
     # Find next empty row
     existing_values = ws.col_values(START_COL)
     write_row = len(existing_values) + 1
     include_header = False
 
-# If worksheet was just created or this is first run, setup formatting
-if worksheet_created or not header_present:
-    setup_formatting(ws)
+# If worksheet was just created, setup formatting
+if worksheet_created:
+    setup_formatting_with_api(sh, ws)
 
 # Write data
 set_with_dataframe(
