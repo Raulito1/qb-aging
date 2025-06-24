@@ -84,24 +84,40 @@ except gspread.WorksheetNotFound:
         cols=len(overdue.columns) + START_COL + 5
     )
 
-# Clear previous data block only (keep column A and rows 1‑2 intact)
-last_col_index = START_COL + len(overdue.columns) - 1
-last_col_letter = re.sub(r"\d", "", rowcol_to_a1(1, last_col_index))
-clear_range = f"{rowcol_to_a1(HEADER_ROW, START_COL)}:{last_col_letter}"
-ws.batch_clear([clear_range])
+    # -------------------------------------------------------------------
+    # Determine where the next upload should begin.
+    #   • On the very first run (no headers yet) we write headers at
+    #     HEADER_ROW and data starts on the row below.
+    #   • On subsequent runs we keep the existing data and simply append
+    #     new rows underneath it without rewriting headers.
+    # -------------------------------------------------------------------
+try:
+    header_present = bool(ws.cell(HEADER_ROW, START_COL).value)
+except gspread.exceptions.APIError:
+    header_present = False  # worksheet is empty
 
-# Write headers at HEADER_ROW, data follows automatically (row 4 stays blank)
+if header_present:
+    # Count the non‑empty cells in the destination column to find the
+    # first free row (col_values includes the header row).
+    existing_values = ws.col_values(START_COL)
+    write_row = len(existing_values) + 1
+    include_header = False
+else:
+    # First upload: create header row and leave data to start beneath it.
+    write_row = HEADER_ROW
+    include_header = True
+
 set_with_dataframe(
     ws,
     overdue,
     include_index=False,
-    include_column_header=True,
+    include_column_header=include_header,
     resize=False,
-    row=HEADER_ROW,
+    row=write_row,
     col=START_COL
 )
 
 print(
-    f"✅ Uploaded {len(overdue)} overdue invoices to "
-    f"'{TARGET_TAB}' starting at {rowcol_to_a1(HEADER_ROW, START_COL)}"
+    f"✅ Appended {len(overdue)} overdue invoices to "
+    f"'{TARGET_TAB}' starting at {rowcol_to_a1(write_row, START_COL)}"
 )
