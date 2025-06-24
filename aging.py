@@ -104,6 +104,7 @@ HEADERS = [
     "Amount",
     "Date",
     "Days Outstanding",
+    "Bucket",
     "Collection Item",
     "Action Taken",
     "Slack Updated",
@@ -122,7 +123,7 @@ rename_map = {
     "Days Overdue": "Days Outstanding",
     "customer": "Customer",
     "customer name": "Customer",
-    "name": "Customer",
+    "customer full name": "Customer",
 }
 overdue.rename(columns=rename_map, inplace=True)
 
@@ -135,22 +136,6 @@ for col in HEADERS:
 overdue = overdue[HEADERS]
 
 # ---- 4. push to Google Sheets (skip column A, headers on row 3, blank row 4) ----
-START_COL = 2        # column B
-HEADER_ROW = 3       # headers in row 3
-
-# Target column layout for the “Overdue aging” sheet
-HEADERS = [
-    "Customer",
-    "Amount",
-    "Date",
-    "Days Outstanding",
-    "Collection Item",
-    "Action Taken",
-    "Slack Updated",
-    "No Work List",
-    "Removed from No Work List Approver",
-    "Demand Letter",
-]
 
 gc = gspread.service_account(filename=BASE / SERVICE_JSON)
 sh = gc.open_by_key(SHEET_ID)
@@ -177,7 +162,7 @@ except gspread.WorksheetNotFound:
             showCustomUi=True
         )
         # Column offsets (0‑based) from START_COL
-        checkbox_offsets = [6, 7, 9]        # Slack Updated, No Work List, Demand Letter
+        checkbox_offsets = [7, 8, 10]        # Slack Updated, No Work List, Demand Letter
         for offset in checkbox_offsets:
             col = START_COL + offset
             rng = f"{rowcol_to_a1(HEADER_ROW + 1, col)}:{rowcol_to_a1(max_rows, col)}"
@@ -190,7 +175,7 @@ except gspread.WorksheetNotFound:
             condition_values=actions,
             showCustomUi=True
         )
-        action_col = START_COL + 5  # “Action Taken”
+        action_col = START_COL + 6  # “Action Taken” (after inserting Bucket)
         rng = f"{rowcol_to_a1(HEADER_ROW + 1, action_col)}:{rowcol_to_a1(max_rows, action_col)}"
         set_data_validation_for_cell_range(ws, rng, dropdown_rule)
     else:
