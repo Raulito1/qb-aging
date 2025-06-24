@@ -57,8 +57,8 @@ for col in ("Due Date", "Balance"):
     if col not in df.columns:
         sys.exit(f"❌  CSV missing '{col}' column.")
 
-df["Due Date"] = pd.to_datetime(df["Due Date"], errors="coerce")
-df["Balance"] = pd.to_numeric(df["Balance"], errors="coerce")
+df["Due Date"] = pd.to_datetime(df["Due Date"], format='%m/%d/%Y', errors="coerce")
+df["Balance"] = pd.to_numeric(df["Balance"].str.replace(',', ''), errors="coerce")
 df["Days Overdue"] = (pd.Timestamp(date.today()) - df["Due Date"]).dt.days
 
 overdue = df.query("Balance > 0 and `Days Overdue` >= 21", engine="python").copy()
