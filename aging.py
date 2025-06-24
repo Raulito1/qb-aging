@@ -35,21 +35,30 @@ df.columns = df.columns.str.replace(r"\s+", " ", regex=True)
 
 # Column mapping
 ALT_NAMES = {
+    # balance synonyms
     "open balance": "balance",
     "amount": "balance",
     "balance": "balance",
+    # due date synonyms
     "due date": "due date",
     "duedate": "due date",
     "invoice due date": "due date",
     "invoice date": "due date",
+    # customer synonyms
+    "customer full name": "customer",
+    "customer name": "customer",
+    "customer": "customer",
 }
 df.rename(columns=ALT_NAMES, inplace=True)
 
 if df.columns.duplicated().any():
     df = df.loc[:, ~df.columns.duplicated(keep="last")]
 
+# Drop subtotal / rubric rows such as "OUT OF RANGE"
 if "date" in df.columns:
+    before_drop = len(df)
     df = df[~df["date"].str.contains("OUT OF RANGE", na=False)]
+    print(f"📊 Dropped {before_drop - len(df)} 'OUT OF RANGE' rows, {len(df)} remaining")
 
 df.rename(columns={"due date": "Due Date", "balance": "Balance"}, inplace=True)
 
@@ -61,11 +70,53 @@ df["Due Date"] = pd.to_datetime(df["Due Date"], format='%m/%d/%Y', errors="coerc
 df["Balance"] = pd.to_numeric(df["Balance"].str.replace(',', ''), errors="coerce")
 df["Days Overdue"] = (pd.Timestamp(date.today()) - df["Due Date"]).dt.days
 
-overdue = df.query("Balance > 0 and `Days Overdue` >= 21", engine="python").copy()
+# Debug: Check for data conversion issues
+print(f"📊 Rows with valid Due Date: {df['Due Date'].notna().sum()}")
+print(f"📊 Rows with valid Balance: {df['Balance'].notna().sum()}")
+print(f"📊 Rows with Balance > 0: {(df['Balance'] > 0).sum()}")
 
+# Check for balance string conversion issues
+balance_conversion_failed = df[df["Balance"].isna() & df["balance"].notna()]
+if len(balance_conversion_failed) > 0:
+    print(f"⚠️  {len(balance_conversion_failed)} rows failed balance conversion")
+    print("   Sample values:", balance_conversion_failed["balance"].head().tolist())
+
+# Only actionable items: unpaid invoices that are at least 21 days late
+overdue = df.query("Balance > 0 and `Days Overdue` >= 21", engine="python").copy()
+print(f"📊 Rows with Balance > 0 AND Days Overdue >= 21: {len(overdue)}")
+
+# Show distribution of days overdue
+print("\n📊 Days Overdue distribution (for Balance > 0):")
+positive_balance = df[df["Balance"] > 0]
+print(f"  - Less than 21 days: {(positive_balance['Days Overdue'] < 21).sum()}")
+print(f"  - 21+ days: {(positive_balance['Days Overdue'] >= 21).sum()}")
+print(f"  - Invalid/NaT dates: {positive_balance['Days Overdue'].isna().sum()}")
+
+# Filter based on configuration
+if PROCESS_ALL:
+    print(f"\n🔧 Processing ALL invoices with Balance > 0")
+    overdue = df[df["Balance"] > 0].copy()
+else:
+    print(f"\n🔧 Processing only invoices {MINIMUM_DAYS_OVERDUE}+ days overdue")
+    overdue = df.query(f"Balance > 0 and `Days Overdue` >= {MINIMUM_DAYS_OVERDUE}", engine="python").copy()
+
+print(f"📊 Final rows to process: {len(overdue)}")
+
+# Collections workflow starts after 20+ days overdue
 bins = [20, 30, 45, 60, 90, float("inf")]
 labels = ["21-30", "31-45", "46-60", "61-90", "91+"]
-overdue["Bucket"] = pd.cut(overdue["Days Overdue"], bins, labels=labels)
+
+# Only apply bucket categorization if Days Overdue > 20
+if not PROCESS_ALL:
+    overdue["Bucket"] = pd.cut(overdue["Days Overdue"], bins, labels=labels)
+else:
+    # For all invoices, only bucket those > 20 days
+    overdue["Bucket"] = pd.cut(
+        overdue["Days Overdue"], 
+        bins, 
+        labels=labels,
+        include_lowest=False
+    )
 
 bucket_to_collection = {
     "21-30": "Accounting Outreach",
@@ -95,7 +146,7 @@ START_COL = 2   # column B
 HEADER_ROW = 3  # header appears in row 3
 MAX_ROWS = 2000
 
-# Conform DataFrame
+# Conform DataFrame to predefined HEADERS
 rename_map = {
     "Balance": "Amount",
     "Due Date": "Date",
@@ -106,10 +157,42 @@ rename_map = {
 }
 overdue.rename(columns=rename_map, inplace=True)
 
+# Additional cleanup for customer column if it wasn't caught earlier
+if "Customer" not in overdue.columns:
+    # Try to find any column with 'customer' in it
+    for col in overdue.columns:
+        if 'customer' in col.lower():
+            overdue.rename(columns={col: "Customer"}, inplace=True)
+            break
+
+# Clean up customer names
+if "Customer" in overdue.columns:
+    # Remove everything after colon
+    overdue["Customer"] = overdue["Customer"].str.split(':').str[0]
+    
+    # Add spaces between camelCase names (e.g., JohnDoe -> John Doe)
+    # This regex finds lowercase followed by uppercase and inserts a space
+    overdue["Customer"] = overdue["Customer"].str.replace(r'([a-z])([A-Z])', r'\1 \2', regex=True)
+    
+    # Clean up any extra whitespace
+    overdue["Customer"] = overdue["Customer"].str.strip()
+    
+    print(f"📊 Cleaned customer names - sample:")
+    print(overdue["Customer"].head(10).tolist())
+
+# Ensure all expected columns exist (blank if not populated yet)
 for col in HEADERS:
     if col not in overdue.columns:
         overdue[col] = None
 
+# Format the Date column to show only YYYY-MM-DD
+if "Date" in overdue.columns and not overdue.empty:
+    # Convert to datetime if not already, then format as string
+    overdue["Date"] = pd.to_datetime(overdue["Date"], errors='coerce').dt.strftime('%Y-%m-%d')
+    print(f"📊 Formatted dates - sample:")
+    print(overdue["Date"].head(5).tolist())
+
+# Re-order columns to match the Google Sheet
 overdue = overdue[HEADERS]
 
 # Connect to Google Sheets
