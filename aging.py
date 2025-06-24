@@ -16,6 +16,10 @@ SERVICE_JSON = "service_account.json"
 TARGET_TAB = "Overdue aging"
 CSV_PATTERN = str(BASE / "incoming_csv" / "*.csv")
 
+# Add option to process all invoices
+PROCESS_ALL = os.getenv("PROCESS_ALL_INVOICES", "false").lower() == "true"
+MINIMUM_DAYS_OVERDUE = 21 if not PROCESS_ALL else 0
+
 try:
     csv_path = max(glob.glob(CSV_PATTERN), key=os.path.getmtime)
 except ValueError:
@@ -23,6 +27,8 @@ except ValueError:
 
 # Process CSV
 df = pd.read_csv(csv_path, dtype=str, skiprows=1)
+print(f"📊 Total rows in CSV: {len(df)}")
+
 df.columns = df.columns.str.strip().str.lower()
 df.columns = df.columns.str.replace("\u00A0", " ", regex=False)
 df.columns = df.columns.str.replace(r"\s+", " ", regex=True)
