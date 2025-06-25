@@ -6,6 +6,7 @@ import gspread
 from gspread_dataframe import set_with_dataframe
 from dotenv import load_dotenv
 import re
+from csv import Sniffer
 from gspread.utils import rowcol_to_a1
 
 BASE = Path(__file__).parent
@@ -23,23 +24,22 @@ except ValueError:
     sys.exit("❌  No CSV found in incoming_csv/.  Aborting.")
 
 #
-# Process CSV with adaptive header detection
+# Read CSV ── autodetect common delimiters and treat first non‑blank row as header
 #
-# Detect whether the first physical line is a banner or the real header
 with open(csv_path, newline="", encoding="utf-8") as f:
-    first_line = f.readline()
+    sample = f.read(2048)  # sample a couple of kB
+    dialect = Sniffer().sniff(sample, delimiters=",;\t")
+    delimiter = dialect.delimiter  # typically "," for standard CSV
 
-# If the first line already contains canonical header keywords, don’t skip it
-header_keywords = ("customer", "balance", "due date")
-if all(k in first_line.lower() for k in header_keywords):
-    skip_header_rows = 0
-else:
-    # Assume QuickBooks‑style banner present – skip the first line
-    skip_header_rows = 1
+print(f"🔎 Detected delimiter: '{delimiter}'")
 
-print(f"🔎 CSV header detection → skiprows={skip_header_rows}")
-
-df = pd.read_csv(csv_path, dtype=str, skiprows=skip_header_rows)
+df = pd.read_csv(
+    csv_path,
+    dtype=str,
+    delimiter=delimiter,
+    skip_blank_lines=True,
+    keep_default_na=False  # keep empty cells as empty strings for easier Sheets updates
+)
 print(f"📊 Total rows in CSV: {len(df)}")
 
 df.columns = df.columns.str.strip().str.lower()
