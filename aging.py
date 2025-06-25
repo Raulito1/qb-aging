@@ -314,7 +314,8 @@ def setup_formatting_with_api(spreadsheet, worksheet):
     })
 
     # 3. Add dropdown for Removed from No Work List Approver (column 10)
-    approver_col_index = START_COL + 10 - 1  # Convert to 0‑based
+    # Column "Removed from No Work List Approver" is header index 10 → 0‑based offset 9
+    approver_col_index = START_COL + 9 - 1
     approvers = ["Julie Harris", "Ben Terrill", "Esau Quiroz"]
 
     requests.append({
