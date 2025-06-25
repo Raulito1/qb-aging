@@ -15,10 +15,7 @@ SHEET_ID = os.getenv("GOOGLE_SHEET_ID")
 SERVICE_JSON = "service_account.json"
 TARGET_TAB = "Overdue aging"
 CSV_PATTERN = str(BASE / "incoming_csv" / "*.csv")
-
-# Add option to process all invoices
-PROCESS_ALL = os.getenv("PROCESS_ALL_INVOICES", "false").lower() == "true"
-MINIMUM_DAYS_OVERDUE = 21 if not PROCESS_ALL else 0
+MINIMUM_DAYS_OVERDUE = 21
 
 try:
     csv_path = max(glob.glob(CSV_PATTERN), key=os.path.getmtime)
@@ -98,13 +95,9 @@ print(f"  - Less than 21 days: {(positive_balance['Days Overdue'] < 21).sum()}")
 print(f"  - 21+ days: {(positive_balance['Days Overdue'] >= 21).sum()}")
 print(f"  - Invalid/NaT dates: {positive_balance['Days Overdue'].isna().sum()}")
 
-# Filter based on configuration
-if PROCESS_ALL:
-    print(f"\n🔧 Processing ALL invoices with Balance > 0")
-    overdue = df[df["Balance"] > 0].copy()
-else:
-    print(f"\n🔧 Processing only invoices {MINIMUM_DAYS_OVERDUE}+ days overdue")
-    overdue = df.query(f"Balance > 0 and `Days Overdue` >= {MINIMUM_DAYS_OVERDUE}", engine="python").copy()
+# Filter invoices based on minimum days overdue threshold
+print(f"\n🔧 Processing only invoices {MINIMUM_DAYS_OVERDUE}+ days overdue")
+overdue = df.query(f"Balance > 0 and `Days Overdue` >= {MINIMUM_DAYS_OVERDUE}", engine="python").copy()
 
 print(f"📊 Final rows to process: {len(overdue)}")
 
@@ -112,17 +105,8 @@ print(f"📊 Final rows to process: {len(overdue)}")
 bins = [20, 30, 45, 60, 90, float("inf")]
 labels = ["21-30", "31-45", "46-60", "61-90", "91+"]
 
-# Only apply bucket categorization if Days Overdue > 20
-if not PROCESS_ALL:
-    overdue["Bucket"] = pd.cut(overdue["Days Overdue"], bins, labels=labels)
-else:
-    # For all invoices, only bucket those > 20 days
-    overdue["Bucket"] = pd.cut(
-        overdue["Days Overdue"], 
-        bins, 
-        labels=labels,
-        include_lowest=False
-    )
+# Apply bucket categorization (only relevant for Days Overdue > 20)
+overdue["Bucket"] = pd.cut(overdue["Days Overdue"], bins, labels=labels)
 
 bucket_to_collection = {
     "21-30": "Accounting Outreach",
