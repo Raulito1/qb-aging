@@ -293,7 +293,7 @@ def setup_formatting_with_api(spreadsheet, worksheet):
         "CSM/AE Notified",
         "Accounting Email Sent"
     ]
-    
+
     requests.append({
         "setDataValidation": {
             "range": {
@@ -312,8 +312,31 @@ def setup_formatting_with_api(spreadsheet, worksheet):
             }
         }
     })
-    
-    # 3. Format Amount column as currency
+
+    # 3. Add dropdown for Removed from No Work List Approver (column 10)
+    approver_col_index = START_COL + 10 - 1  # Convert to 0‑based
+    approvers = ["Julie Harris", "Ben Terrill", "Esau Quiroz"]
+
+    requests.append({
+        "setDataValidation": {
+            "range": {
+                "sheetId": sheet_id,
+                "startRowIndex": HEADER_ROW,
+                "endRowIndex": MAX_ROWS,
+                "startColumnIndex": approver_col_index,
+                "endColumnIndex": approver_col_index + 1
+            },
+            "rule": {
+                "condition": {
+                    "type": "ONE_OF_LIST",
+                    "values": [{"userEnteredValue": approver} for approver in approvers]
+                },
+                "showCustomUi": True
+            }
+        }
+    })
+
+    # 4. Format Amount column as currency
     amt_col_index = START_COL + 1 - 1  # Convert to 0-based
     requests.append({
         "repeatCell": {
@@ -336,7 +359,7 @@ def setup_formatting_with_api(spreadsheet, worksheet):
         }
     })
     
-    # 4. Format Date column
+    # 5. Format Date column
     date_col_index = START_COL + 2 - 1  # Convert to 0-based
     requests.append({
         "repeatCell": {
