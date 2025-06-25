@@ -122,7 +122,20 @@ if "Customer" in overdue.columns:
     overdue["Customer"] = overdue["Customer"].str.replace(r"([a-z])([A-Z])", r"\1 \2", regex=True)
     overdue["Customer"] = overdue["Customer"].str.strip()
 else:
-    raise KeyError("❌  Expected 'Customer' column not found after renaming")
+    # Attempt a best‑effort fallback: find any column containing 'customer'
+    fallback_cols = [c for c in overdue.columns if "customer" in c.lower()]
+    if fallback_cols:
+        overdue.rename(columns={fallback_cols[0]: "Customer"}, inplace=True)
+        print(f"⚠️  Using fallback column '{fallback_cols[0]}' as 'Customer'")
+        overdue["Customer"] = overdue["Customer"].str.split(":").str[0]
+        overdue["Customer"] = overdue["Customer"].str.replace(r"([a-z])([A-Z])", r"\1 \2", regex=True)
+        overdue["Customer"] = overdue["Customer"].str.strip()
+    else:
+        raise KeyError(
+            f"❌  Could not locate a customer column. Available columns: {list(overdue.columns)}"
+        )
+
+print(f"📊 Columns before aggregation: {list(overdue.columns)}")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 🔄  Aggregate multiple invoices per Customer
