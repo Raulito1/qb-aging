@@ -420,8 +420,10 @@ new_rows = []
 
 for _, r in overdue.iterrows():
     cust = r["Customer"]
-    # Row values in sheet order
-    row_values = [r[h] for h in HEADERS]
+    # Sanitize NaNs for Sheets API
+    row_values = [
+        ("" if pd.isna(r[h]) else r[h]) for h in HEADERS
+    ]
 
     if cust in customer_to_row:
         # Update columns B‑G (Customer .. Collection Item)
@@ -436,7 +438,7 @@ for _, r in overdue.iterrows():
 if new_rows:
     ws.append_rows(
         new_rows,
-        table_range=rowcol_to_a1(HEADER_ROW, START_COL),
+        table_range=rowcol_to_a1(HEADER_ROW + 1, START_COL),  # start below headers
         value_input_option="USER_ENTERED"
     )
     print(f"➕ Added {len(new_rows)} new customers")
