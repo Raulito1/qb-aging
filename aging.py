@@ -403,27 +403,44 @@ if not header_present:
     # Initial formatting (checkboxes, dropdowns, etc.)
     setup_formatting_with_api(sh, ws)
 
-# 🔄 Always start fresh ─ clear previous data rows to avoid duplicates
-data_range = f"{rowcol_to_a1(HEADER_ROW + 1, START_COL)}:{rowcol_to_a1(MAX_ROWS, START_COL + len(HEADERS) - 1)}"
-ws.batch_clear([data_range])
-write_row = HEADER_ROW + 1
-include_header = False
+# ─────────────────────────────────────────────────────────────────────────────
+# 🔄  Incremental update: update existing customers; append new ones
+# ─────────────────────────────────────────────────────────────────────────────
+existing_customers = ws.col_values(START_COL)  # Column B
+# Drop header rows
+existing_customers = existing_customers[HEADER_ROW:]
+customer_to_row = {
+    name.strip(): idx
+    for idx, name in enumerate(existing_customers, start=HEADER_ROW + 1)
+    if name.strip()
+}
 
-# Write data
-set_with_dataframe(
-    ws,
-    overdue,
-    include_index=False,
-    include_column_header=include_header,
-    resize=False,
-    row=write_row,
-    col=START_COL
-)
+new_rows = []
 
-print(
-    f"✅ Appended {len(overdue)} overdue invoices to "
-    f"'{TARGET_TAB}' starting at {rowcol_to_a1(write_row, START_COL)}"
-)
+for _, r in overdue.iterrows():
+    cust = r["Customer"]
+    # Row values in sheet order
+    row_values = [r[h] for h in HEADERS]
 
-# Re‑apply checkboxes & dropdowns after writing values
+    if cust in customer_to_row:
+        # Update columns B‑G (Customer .. Collection Item)
+        sheet_row = customer_to_row[cust]
+        start_cell = rowcol_to_a1(sheet_row, START_COL)
+        end_cell   = rowcol_to_a1(sheet_row, START_COL + 5)
+        ws.update(f"{start_cell}:{end_cell}", [row_values[:6]])
+        print(f"🔄 Updated existing customer '{cust}' at row {sheet_row}")
+    else:
+        new_rows.append(row_values)
+
+if new_rows:
+    ws.append_rows(
+        new_rows,
+        table_range=rowcol_to_a1(HEADER_ROW, START_COL),
+        value_input_option="USER_ENTERED"
+    )
+    print(f"➕ Added {len(new_rows)} new customers")
+
+print("✅ Sheet synchronised with latest CSV data")
+
+# Ensure formatting (checkboxes, dropdowns, number/date formats) still applied
 setup_formatting_with_api(sh, ws)
