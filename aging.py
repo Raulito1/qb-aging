@@ -401,3 +401,6 @@ print(
     f"✅ Appended {len(overdue)} overdue invoices to "
     f"'{TARGET_TAB}' starting at {rowcol_to_a1(write_row, START_COL)}"
 )
+
+# Re‑apply checkboxes & dropdowns after writing values
+setup_formatting_with_api(sh, ws)
