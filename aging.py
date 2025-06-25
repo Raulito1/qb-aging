@@ -99,7 +99,30 @@ print(f"  - Invalid/NaT dates: {positive_balance['Days Overdue'].isna().sum()}")
 print(f"\n🔧 Processing only invoices {MINIMUM_DAYS_OVERDUE}+ days overdue")
 overdue = df.query(f"Balance > 0 and `Days Overdue` >= {MINIMUM_DAYS_OVERDUE}", engine="python").copy()
 
+
 print(f"📊 Final rows to process: {len(overdue)}")
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 🔧  Normalize column names BEFORE aggregation
+#      Ensure we have 'Customer', 'Amount', 'Date', 'Days Outstanding'
+# ─────────────────────────────────────────────────────────────────────────────
+rename_map_pre = {
+    "Balance": "Amount",
+    "Due Date": "Date",
+    "Days Overdue": "Days Outstanding",
+    "customer": "Customer",
+    "customer name": "Customer",
+    "customer full name": "Customer",
+}
+overdue.rename(columns=rename_map_pre, inplace=True)
+
+# Clean up customer names early so aggregation key is consistent
+if "Customer" in overdue.columns:
+    overdue["Customer"] = overdue["Customer"].str.split(":").str[0]
+    overdue["Customer"] = overdue["Customer"].str.replace(r"([a-z])([A-Z])", r"\1 \2", regex=True)
+    overdue["Customer"] = overdue["Customer"].str.strip()
+else:
+    raise KeyError("❌  Expected 'Customer' column not found after renaming")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 🔄  Aggregate multiple invoices per Customer
@@ -160,16 +183,6 @@ START_COL = 2   # column B
 HEADER_ROW = 3  # header appears in row 3
 MAX_ROWS = 2000
 
-# Conform DataFrame to predefined HEADERS
-rename_map = {
-    "Balance": "Amount",
-    "Due Date": "Date",
-    "Days Overdue": "Days Outstanding",
-    "customer": "Customer",
-    "customer name": "Customer",
-    "customer full name": "Customer",
-}
-overdue.rename(columns=rename_map, inplace=True)
 
 # Additional cleanup for customer column if it wasn't caught earlier
 if "Customer" not in overdue.columns:
