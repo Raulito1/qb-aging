@@ -327,19 +327,14 @@ except gspread.exceptions.APIError:
 # Write headers if needed
 if not header_present:
     ws.update(rowcol_to_a1(HEADER_ROW, START_COL), [HEADERS])
-    write_row = HEADER_ROW + 1
-    include_header = False
-    # Setup formatting after headers are written
+    # Initial formatting (checkboxes, dropdowns, etc.)
     setup_formatting_with_api(sh, ws)
-else:
-    # Find next empty row
-    existing_values = ws.col_values(START_COL)
-    write_row = len(existing_values) + 1
-    include_header = False
 
-# If worksheet was just created, setup formatting
-if worksheet_created:
-    setup_formatting_with_api(sh, ws)
+# 🔄 Always start fresh ─ clear previous data rows to avoid duplicates
+data_range = f"{rowcol_to_a1(HEADER_ROW + 1, START_COL)}:{rowcol_to_a1(MAX_ROWS, START_COL + len(HEADERS) - 1)}"
+ws.batch_clear([data_range])
+write_row = HEADER_ROW + 1
+include_header = False
 
 # Write data
 set_with_dataframe(
