@@ -24,67 +24,109 @@ except ValueError:
     sys.exit("❌  No CSV found in incoming_csv/.  Aborting.")
 
 #
-# Read CSV ── autodetect common delimiters and treat first non‑blank row as header
+# Read CSV ── Handle the specific structure with title row
 #
-with open(csv_path, newline="", encoding="utf-8") as f:
-    sample = f.read(2048)  # sample a couple of kB
-    dialect = Sniffer().sniff(sample, delimiters=",;\t")
-    delimiter = dialect.delimiter  # typically "," for standard CSV
+def read_ar_aging_csv(csv_path):
+    """Read AR Aging CSV with title row structure"""
+    with open(csv_path, 'r', encoding='utf-8') as f:
+        lines = f.readlines()
+    
+    # Find the header row (contains "Date", "Due date", etc.)
+    header_row_idx = None
+    for i, line in enumerate(lines):
+        if 'Due date' in line and 'Customer full name' in line:
+            header_row_idx = i
+            break
+    
+    if header_row_idx is None:
+        sys.exit("❌  Could not find header row with 'Due date' and 'Customer full name'")
+    
+    print(f"🔎 Found headers at line {header_row_idx + 1}")
+    
+    # Join lines from header onwards
+    csv_content = ''.join(lines[header_row_idx:])
+    
+    # Detect delimiter
+    sniffer = Sniffer()
+    dialect = sniffer.sniff(csv_content[:1024], delimiters=",;\t")
+    delimiter = dialect.delimiter
+    
+    print(f"🔎 Detected delimiter: '{delimiter}'")
+    
+    # Read with pandas from the header line onwards
+    from io import StringIO
+    df = pd.read_csv(
+        StringIO(csv_content),
+        dtype=str,
+        delimiter=delimiter,
+        skip_blank_lines=True,
+        keep_default_na=False
+    )
+    
+    return df
 
-print(f"🔎 Detected delimiter: '{delimiter}'")
-
-df = pd.read_csv(
-    csv_path,
-    dtype=str,
-    delimiter=delimiter,
-    skip_blank_lines=True,
-    keep_default_na=False  # keep empty cells as empty strings for easier Sheets updates
-)
+df = read_ar_aging_csv(csv_path)
 print(f"📊 Total rows in CSV: {len(df)}")
+print(f"📊 Original columns: {list(df.columns)}")
 
+# Clean column names
 df.columns = df.columns.str.strip().str.lower()
 df.columns = df.columns.str.replace("\u00A0", " ", regex=False)
 df.columns = df.columns.str.replace(r"\s+", " ", regex=True)
 
-# Column mapping
+print(f"📊 Cleaned columns: {list(df.columns)}")
+
+# Updated column mapping for your specific CSV structure
 ALT_NAMES = {
-    # balance synonyms
+    # Balance synonyms - use "open balance" as it's the current amount owed
     "open balance": "balance",
-    "amount": "balance",
+    "amount": "balance",  # fallback
     "balance": "balance",
-    # due date synonyms  ── must reflect the actual *due* date, not invoice date
+    
+    # Due date synonyms
     "due date": "due date",
     "duedate": "due date",
     "invoice due date": "due date",
-
-    # invoice date synonyms  ── kept separate so we don’t confuse aging logic
-    "invoice date": "invoice date",
-    "date": "invoice date",
-
-    # customer synonyms
+    
+    # Invoice date synonyms
+    "invoice date": "invoice date", 
+    "date": "invoice date",  # This is transaction/invoice date, not due date
+    
+    # Customer synonyms
     "customer full name": "customer",
     "customer name": "customer",
     "customer": "customer",
 }
-df.rename(columns=ALT_NAMES, inplace=True)
 
+df.rename(columns=ALT_NAMES, inplace=True)
+print(f"📊 Columns after mapping: {list(df.columns)}")
+
+# Remove duplicate columns
 if df.columns.duplicated().any():
     df = df.loc[:, ~df.columns.duplicated(keep="last")]
 
-# Drop subtotal / rubric rows such as "OUT OF RANGE"
-if "date" in df.columns:
-    before_drop = len(df)
-    df = df[~df["date"].str.contains("OUT OF RANGE", na=False)]
-    print(f"📊 Dropped {before_drop - len(df)} 'OUT OF RANGE' rows, {len(df)} remaining")
+# Drop subtotal/rubric rows such as "OUT OF RANGE"
+before_drop = len(df)
+# Check multiple possible columns for OUT OF RANGE
+for col in df.columns:
+    if df[col].astype(str).str.contains("OUT OF RANGE", na=False).any():
+        df = df[~df[col].astype(str).str.contains("OUT OF RANGE", na=False)]
+        break
 
+print(f"📊 Dropped {before_drop - len(df)} 'OUT OF RANGE' rows, {len(df)} remaining")
+
+# Standardize final column names for processing
 df.rename(columns={"due date": "Due Date", "balance": "Balance"}, inplace=True)
+print(f"📊 Final columns: {list(df.columns)}")
 
+# Verify required columns exist
 for col in ("Due Date", "Balance"):
     if col not in df.columns:
-        sys.exit(f"❌  CSV missing '{col}' column.")
+        print(f"❌  Available columns: {list(df.columns)}")
+        sys.exit(f"❌  CSV missing '{col}' column after mapping.")
 
+# Process dates and amounts
 df["Due Date"] = pd.to_datetime(df["Due Date"], format='%m/%d/%Y', errors="coerce")
-# Preserve the original Balance string values for diagnostics
 df["Balance_raw"] = df["Balance"]
 df["Balance"] = pd.to_numeric(df["Balance"].str.replace(',', ''), errors="coerce")
 df["Days Overdue"] = (pd.Timestamp(date.today()) - df["Due Date"]).dt.days
@@ -94,37 +136,36 @@ print(f"📊 Rows with valid Due Date: {df['Due Date'].notna().sum()}")
 print(f"📊 Rows with valid Balance: {df['Balance'].notna().sum()}")
 print(f"📊 Rows with Balance > 0: {(df['Balance'] > 0).sum()}")
 
-# Check for balance string conversion issues
+# Check for balance conversion issues
 balance_conversion_failed = df[df["Balance"].isna() & df["Balance_raw"].notna()]
 if len(balance_conversion_failed) > 0:
     print(f"⚠️  {len(balance_conversion_failed)} rows failed balance conversion")
     print("   Sample raw balance values:", balance_conversion_failed["Balance_raw"].head().tolist())
 
-# Only actionable items: unpaid invoices that are at least 21 days late
-overdue = df.query("Balance > 0 and `Days Overdue` >= 21", engine="python").copy()
-print(f"📊 Rows with Balance > 0 AND Days Overdue >= 21: {len(overdue)}")
-
-# Show distribution of days overdue
-print("\n📊 Days Overdue distribution (for Balance > 0):")
-positive_balance = df[df["Balance"] > 0]
-print(f"  - Less than 21 days: {(positive_balance['Days Overdue'] < 21).sum()}")
-print(f"  - 21+ days: {(positive_balance['Days Overdue'] >= 21).sum()}")
-print(f"  - Invalid/NaT dates: {positive_balance['Days Overdue'].isna().sum()}")
-
-# Filter invoices based on minimum days overdue threshold
+# Filter based on minimum days overdue threshold
 print(f"\n🔧 Processing only invoices {MINIMUM_DAYS_OVERDUE}+ days overdue")
 overdue = df.query(f"Balance > 0 and `Days Overdue` >= {MINIMUM_DAYS_OVERDUE}", engine="python").copy()
 
-
 print(f"📊 Final rows to process: {len(overdue)}")
+
+# Show distribution for debugging
+print("\n📊 Days Overdue distribution (for Balance > 0):")
+positive_balance = df[df["Balance"] > 0]
+if len(positive_balance) > 0:
+    print(f"  - Less than 21 days: {(positive_balance['Days Overdue'] < 21).sum()}")
+    print(f"  - 21+ days: {(positive_balance['Days Overdue'] >= 21).sum()}")
+    print(f"  - Invalid/NaT dates: {positive_balance['Days Overdue'].isna().sum()}")
+
+if len(overdue) == 0:
+    print("⚠️  No overdue records found. Exiting.")
+    sys.exit(0)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 🔧  Normalize column names BEFORE aggregation
-#      Ensure we have 'Customer', 'Amount', 'Date', 'Days Outstanding'
 # ─────────────────────────────────────────────────────────────────────────────
 rename_map_pre = {
     "Balance": "Amount",
-    "Due Date": "Date",
+    "Due Date": "Date", 
     "Days Overdue": "Days Outstanding",
     "customer": "Customer",
     "customer name": "Customer",
@@ -132,13 +173,13 @@ rename_map_pre = {
 }
 overdue.rename(columns=rename_map_pre, inplace=True)
 
-# Clean up customer names early so aggregation key is consistent
+# Clean up customer names
 if "Customer" in overdue.columns:
     overdue["Customer"] = overdue["Customer"].str.split(":").str[0]
     overdue["Customer"] = overdue["Customer"].str.replace(r"([a-z])([A-Z])", r"\1 \2", regex=True)
     overdue["Customer"] = overdue["Customer"].str.strip()
 else:
-    # Attempt a best‑effort fallback: find any column containing 'customer'
+    # Fallback: find any column containing 'customer'
     fallback_cols = [c for c in overdue.columns if "customer" in c.lower()]
     if fallback_cols:
         overdue.rename(columns={fallback_cols[0]: "Customer"}, inplace=True)
@@ -147,21 +188,16 @@ else:
         overdue["Customer"] = overdue["Customer"].str.replace(r"([a-z])([A-Z])", r"\1 \2", regex=True)
         overdue["Customer"] = overdue["Customer"].str.strip()
     else:
-        raise KeyError(
-            f"❌  Could not locate a customer column. Available columns: {list(overdue.columns)}"
-        )
+        raise KeyError(f"❌  Could not locate a customer column. Available columns: {list(overdue.columns)}")
 
 print(f"📊 Columns before aggregation: {list(overdue.columns)}")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 🔄  Aggregate multiple invoices per Customer
-#     • Sum the Amounts
-#     • Use the OLDEST (minimum) invoice Date
-#     • Re‑compute Days Outstanding based on that oldest Date
 # ─────────────────────────────────────────────────────────────────────────────
 agg_cols = {
     "Amount": "sum",
-    "Date": "min",        # oldest outstanding invoice
+    "Date": "min",  # oldest outstanding invoice
 }
 overdue = (
     overdue
@@ -172,31 +208,29 @@ overdue = (
 
 # Recompute Days Outstanding using the oldest Date
 overdue["Date"] = pd.to_datetime(overdue["Date"], errors="coerce")
-overdue["Days Outstanding"] = (
-    pd.Timestamp(date.today()) - overdue["Date"]
-).dt.days
+overdue["Days Outstanding"] = (pd.Timestamp(date.today()) - overdue["Date"]).dt.days
 
 print(f"📊 Aggregated to unique customers: {len(overdue)} rows")
 
 # Collections workflow buckets (21+ days only)
-bins   = [20, 30, 45, 60, 90, float("inf")]
+bins = [20, 30, 45, 60, 90, float("inf")]
 labels = ["21-30", "31-45", "46-60", "61-90", "91+"]
 
 overdue["Bucket"] = pd.cut(overdue["Days Outstanding"], bins, labels=labels)
 
 bucket_to_collection = {
     "21-30": "Accounting Outreach",
-    "31-45": "CSM/AE Outreach",
+    "31-45": "CSM/AE Outreach", 
     "46-60": "Manager Escalation",
     "61-90": "Add to No Work List",
-    "91+":   "Demand Letter",
+    "91+": "Demand Letter",
 }
 overdue["Collection Item"] = overdue["Bucket"].astype(str).map(bucket_to_collection)
 
 # Constants
 HEADERS = [
     "Customer",
-    "Amount",
+    "Amount", 
     "Date",
     "Days Outstanding",
     "Bucket",
@@ -212,41 +246,15 @@ START_COL = 2   # column B
 HEADER_ROW = 3  # header appears in row 3
 MAX_ROWS = 2000
 
-
-# Additional cleanup for customer column if it wasn't caught earlier
-if "Customer" not in overdue.columns:
-    # Try to find any column with 'customer' in it
-    for col in overdue.columns:
-        if 'customer' in col.lower():
-            overdue.rename(columns={col: "Customer"}, inplace=True)
-            break
-
-# Clean up customer names
-if "Customer" in overdue.columns:
-    # Remove everything after colon
-    overdue["Customer"] = overdue["Customer"].str.split(':').str[0]
-    
-    # Add spaces between camelCase names (e.g., JohnDoe -> John Doe)
-    # This regex finds lowercase followed by uppercase and inserts a space
-    overdue["Customer"] = overdue["Customer"].str.replace(r'([a-z])([A-Z])', r'\1 \2', regex=True)
-    
-    # Clean up any extra whitespace
-    overdue["Customer"] = overdue["Customer"].str.strip()
-    
-    print(f"📊 Cleaned customer names - sample:")
-    print(overdue["Customer"].head(10).tolist())
-
-# Ensure all expected columns exist (blank if not populated yet)
+# Ensure all expected columns exist
 for col in HEADERS:
     if col not in overdue.columns:
         overdue[col] = None
 
-# Format the Date column to show only YYYY-MM-DD
+# Format the Date column
 if "Date" in overdue.columns and not overdue.empty:
-    # Convert to datetime if not already, then format as string
     overdue["Date"] = pd.to_datetime(overdue["Date"], errors='coerce').dt.strftime('%Y-%m-%d')
-    print(f"📊 Formatted dates - sample:")
-    print(overdue["Date"].head(5).tolist())
+    print(f"📊 Formatted dates - sample: {overdue['Date'].head(5).tolist()}")
 
 # Re-order columns to match the Google Sheet
 overdue = overdue[HEADERS]
@@ -266,7 +274,6 @@ except gspread.WorksheetNotFound:
         cols=len(HEADERS) + START_COL + 5
     )
     worksheet_created = True
-
 
 def setup_formatting_with_api(spreadsheet, worksheet):
     """Setup dropdowns and checkboxes using Sheets API directly"""
@@ -304,7 +311,7 @@ def setup_formatting_with_api(spreadsheet, worksheet):
     actions = [
         "Add to No Work List",
         "Payment Plan Proposed",
-        "Payment Plan Established",
+        "Payment Plan Established", 
         "Manager Escalation",
         "CSM/AE Notified",
         "Accounting Email Sent"
@@ -330,7 +337,6 @@ def setup_formatting_with_api(spreadsheet, worksheet):
     })
 
     # 3. Add dropdown for Removed from No Work List Approver (column 10)
-    # Column "Removed from No Work List Approver" is header index 10 → 0‑based offset 9
     approver_col_index = START_COL + 9 - 1
     approvers = ["Julie Harris", "Ben Terrill", "Esau Quiroz"]
 
@@ -407,7 +413,6 @@ def setup_formatting_with_api(spreadsheet, worksheet):
         except Exception as e:
             print(f"⚠️  Error applying formatting: {e}")
 
-
 # Check if headers exist
 try:
     header_present = bool(ws.cell(HEADER_ROW, START_COL).value)
@@ -417,14 +422,12 @@ except gspread.exceptions.APIError:
 # Write headers if needed
 if not header_present:
     ws.update(rowcol_to_a1(HEADER_ROW, START_COL), [HEADERS])
-    # Initial formatting (checkboxes, dropdowns, etc.)
     setup_formatting_with_api(sh, ws)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 🔄  Incremental update: update existing customers; append new ones
 # ─────────────────────────────────────────────────────────────────────────────
 existing_customers = ws.col_values(START_COL)  # Column B
-# Drop header rows
 existing_customers = existing_customers[HEADER_ROW:]
 customer_to_row = {
     name.strip(): idx
@@ -445,7 +448,7 @@ for _, r in overdue.iterrows():
         # Update columns B‑G (Customer .. Collection Item)
         sheet_row = customer_to_row[cust]
         start_cell = rowcol_to_a1(sheet_row, START_COL)
-        end_cell   = rowcol_to_a1(sheet_row, START_COL + 5)
+        end_cell = rowcol_to_a1(sheet_row, START_COL + 5)
         ws.update(f"{start_cell}:{end_cell}", [row_values[:6]])
         print(f"🔄 Updated existing customer '{cust}' at row {sheet_row}")
     else:
@@ -454,12 +457,12 @@ for _, r in overdue.iterrows():
 if new_rows:
     ws.append_rows(
         new_rows,
-        table_range=rowcol_to_a1(HEADER_ROW + 1, START_COL),  # start below headers
+        table_range=rowcol_to_a1(HEADER_ROW + 1, START_COL),
         value_input_option="USER_ENTERED"
     )
     print(f"➕ Added {len(new_rows)} new customers")
 
 print("✅ Sheet synchronised with latest CSV data")
 
-# Ensure formatting (checkboxes, dropdowns, number/date formats) still applied
+# Ensure formatting is applied
 setup_formatting_with_api(sh, ws)
