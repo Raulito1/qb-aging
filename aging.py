@@ -22,8 +22,24 @@ try:
 except ValueError:
     sys.exit("❌  No CSV found in incoming_csv/.  Aborting.")
 
-# Process CSV
-df = pd.read_csv(csv_path, dtype=str, skiprows=1)
+#
+# Process CSV with adaptive header detection
+#
+# Detect whether the first physical line is a banner or the real header
+with open(csv_path, newline="", encoding="utf-8") as f:
+    first_line = f.readline()
+
+# If the first line already contains canonical header keywords, don’t skip it
+header_keywords = ("customer", "balance", "due date")
+if all(k in first_line.lower() for k in header_keywords):
+    skip_header_rows = 0
+else:
+    # Assume QuickBooks‑style banner present – skip the first line
+    skip_header_rows = 1
+
+print(f"🔎 CSV header detection → skiprows={skip_header_rows}")
+
+df = pd.read_csv(csv_path, dtype=str, skiprows=skip_header_rows)
 print(f"📊 Total rows in CSV: {len(df)}")
 
 df.columns = df.columns.str.strip().str.lower()
