@@ -101,19 +101,43 @@ overdue = df.query(f"Balance > 0 and `Days Overdue` >= {MINIMUM_DAYS_OVERDUE}", 
 
 print(f"📊 Final rows to process: {len(overdue)}")
 
-# Collections workflow starts after 20+ days overdue
-bins = [20, 30, 45, 60, 90, float("inf")]
+# ─────────────────────────────────────────────────────────────────────────────
+# 🔄  Aggregate multiple invoices per Customer
+#     • Sum the Amounts
+#     • Use the OLDEST (minimum) invoice Date
+#     • Re‑compute Days Outstanding based on that oldest Date
+# ─────────────────────────────────────────────────────────────────────────────
+agg_cols = {
+    "Amount": "sum",
+    "Date": "min",        # oldest outstanding invoice
+}
+overdue = (
+    overdue
+    .groupby("Customer", as_index=False)
+    .agg(agg_cols)
+    .copy()
+)
+
+# Recompute Days Outstanding using the oldest Date
+overdue["Date"] = pd.to_datetime(overdue["Date"], errors="coerce")
+overdue["Days Outstanding"] = (
+    pd.Timestamp(date.today()) - overdue["Date"]
+).dt.days
+
+print(f"📊 Aggregated to unique customers: {len(overdue)} rows")
+
+# Collections workflow buckets (21+ days only)
+bins   = [20, 30, 45, 60, 90, float("inf")]
 labels = ["21-30", "31-45", "46-60", "61-90", "91+"]
 
-# Apply bucket categorization (only relevant for Days Overdue > 20)
-overdue["Bucket"] = pd.cut(overdue["Days Overdue"], bins, labels=labels)
+overdue["Bucket"] = pd.cut(overdue["Days Outstanding"], bins, labels=labels)
 
 bucket_to_collection = {
     "21-30": "Accounting Outreach",
     "31-45": "CSM/AE Outreach",
     "46-60": "Manager Escalation",
     "61-90": "Add to No Work List",
-    "91+": "Demand Letter",
+    "91+":   "Demand Letter",
 }
 overdue["Collection Item"] = overdue["Bucket"].astype(str).map(bucket_to_collection)
 
